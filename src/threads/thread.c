@@ -167,11 +167,14 @@ thread_create (const char *name, int priority,
                thread_func *function, void *aux) 
 {
   struct thread *t;
-  struct kernel_thread_frame *kf;
+  struct kernel_thread_frame *kf; //stack frame for kernel thread
   struct switch_entry_frame *ef;
   struct switch_threads_frame *sf;
   tid_t tid;
+
+  /* mazen code satrt */
   enum intr_level old_level;
+  /* mazen code end */
 
   ASSERT (function != NULL);
 
@@ -184,10 +187,12 @@ thread_create (const char *name, int priority,
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
 
-  /* Prepare thread for first run by initializing its stack.
-     Do this atomically so intermediate values for the 'stack' 
-     member cannot be observed. */
-  old_level = intr_disable ();
+  /* mazen code start */
+  /*
+   * Initialize the thread's stack when it first running.
+   */
+  old_level = intr_disable();
+  /* mazen code end */
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -204,13 +209,45 @@ thread_create (const char *name, int priority,
   sf->eip = switch_entry;
   sf->ebp = 0;
 
-  intr_set_level (old_level);
+  /* mazen code start */
+  /*
+   * Setting old interrupt level
+   */
+  intr_set_level(old_level);
+  /* mazen code end */
 
   /* Add to run queue. */
   thread_unblock (t);
 
+  /* mazen code start*/
+  /*
+   * testing for preemption (compare piriority between current thread and one of the ready ones)
+      and if preemption is necessary it calls thread_yield()
+   */
+  old_level = intr_disable();
+  test_yield();
+  intr_set_level(old_level);
+  /* mazen code end*/
+
   return tid;
 }
+
+/* mazen code start*/
+/* Test the current thread whether should out of CPU or not*/
+void test_yield(void)
+{
+  struct thread *t;
+  
+  if (list_empty(&ready_list))
+    return;
+  // the first thread in readyList(the highst piriority "decending order")
+  t = list_entry(list_front(&ready_list), struct thread, elem);
+
+  if ((thread_current() -> priority) < t -> priority)
+    thread_yield();
+}
+/* mazen code end*/
+
 
 /* Puts the current thread to sleep.  It will not be scheduled
    again until awoken by thread_unblock().
@@ -245,10 +282,39 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+
+  /* mazen code start*/
+  /* now unblocked threads goes to ready list but since we are using piriority scheduling 
+     it has to be inserted in order(decending order) so we should delete 
+     [list_push_back(&ready_list, &t->elem);] and replace it with correct insertion
+     note: i will just comment it */
+
+  //list_push_back (&ready_list, &t->elem);
+
+  list_insert_ordered(&ready_list,&t -> elem, (list_less_func *) &isHigherPiriority,NULL);
+  /*
+      =>> isHigherPiriority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+      it checks if a's piriority is higher or not
+      it's compatible with list_insert_oredered found in list.c
+  */
+  /*mazen code end*/
+
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
+
+/* mazen code start*/
+bool isHigherPiriority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+  struct thread *ta = list_entry(a, struct thread, elem);
+  struct thread *tb = list_entry(b, struct thread, elem);
+  
+  if ((ta -> priority) > (tb -> priority))
+    return true;
+  
+  return false;
+}
+/*mazen code end*/
 
 /* Returns the name of the running thread. */
 const char *
@@ -315,8 +381,17 @@ thread_yield (void)
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
+
+  /* mazen code start*/
+  /* now we are going to make same operation on current thread when it's time to yield cpu to
+     other thread we have to insert into ready list (in order)
+  */
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    //list_push_back (&ready_list, &cur->elem);
+    list_insert_ordered(&ready_list, &cur -> elem, (list_less_func *) &isHigherPiriority, NULL);
+
+  /* mazen code end*/
+
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -343,6 +418,7 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
+
   thread_current ()->priority = new_priority;
 }
 
@@ -459,6 +535,8 @@ is_thread (struct thread *t)
 static void
 init_thread (struct thread *t, const char *name, int priority)
 {
+  enum intr_level old_level;
+
   ASSERT (t != NULL);
   ASSERT (PRI_MIN <= priority && priority <= PRI_MAX);
   ASSERT (name != NULL);
@@ -469,7 +547,10 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+
+  old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
+  intr_set_level (old_level);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and

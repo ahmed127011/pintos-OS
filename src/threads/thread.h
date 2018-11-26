@@ -138,4 +138,10 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
+/* mazen code start*/
+void test_yield(void); /* Test the current thread whether should be out of CPU or not*/
+bool isHigherPiriority (const struct list_elem *a, const struct list_elem *b, void *aux);
+/*helps with insertion into ready list*/
+/* mazen code end*/
+
 #endif /* threads/thread.h */
