@@ -89,6 +89,8 @@ struct thread
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
     struct list_elem allelem;           /* List element for all threads list. */
+    struct lock* locks[8];               /*contains all locks acquired by thread */
+
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
@@ -100,6 +102,7 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+
   };
 
 /* If false (default), use round-robin scheduler.
@@ -143,5 +146,13 @@ void test_yield(void); /* Test the current thread whether should be out of CPU o
 bool isHigherPiriority (const struct list_elem *a, const struct list_elem *b, void *aux);
 /*helps with insertion into ready list*/
 /* mazen code end*/
+
+
+
+int get_current_priority(void);
+void init_locks(struct thread*);
+void add_lock(struct lock*);
+void remove_lock(struct lock*);
+int get_priority(struct thread* );
 
 #endif /* threads/thread.h */
