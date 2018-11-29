@@ -257,11 +257,13 @@ void test_yield(void) {
     if (list_empty(&ready_list))
         return;
     // the first thread in readyList(the highst piriority "decending order")
-    t = list_entry(list_front(&ready_list),
+    list_sort(&ready_list,isHigherPiriority,NULL);
+    t = list_entry(list_back(&ready_list),
     struct thread, elem);
-
     if (thread_get_priority() < get_priority(t))
+    {
         thread_yield();
+    }
 }
 /* mazen code end*/
 
@@ -306,7 +308,7 @@ thread_unblock(struct thread *t) {
 
     //list_push_back (&ready_list, &t->elem);
 
-    list_insert_ordered(&ready_list, &t->elem, (list_less_func * ) & isHigherPiriority, NULL);
+    list_push_front(&ready_list, &t->elem);
     /*
         =>> isHigherPiriority(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
         it checks if a's piriority is higher or not
@@ -325,10 +327,8 @@ bool isHigherPiriority(const struct list_elem *a, const struct list_elem *b, voi
     struct thread *tb = list_entry(b,
     struct thread, elem);
 
-    if (ta->priority > tb->priority)
-        return true;
+    return (get_priority(ta) <get_priority(tb));
 
-    return false;
 }
 /*mazen code end*/
 
@@ -399,7 +399,7 @@ thread_yield(void) {
     */
     if (cur != idle_thread)
         //list_push_back (&ready_list, &cur->elem);
-        list_insert_ordered(&ready_list, &cur->elem, (list_less_func * ) & isHigherPiriority, NULL);
+        list_push_front(&ready_list, &cur->elem);
 
     /* mazen code end*/
 
@@ -429,6 +429,7 @@ void
 thread_set_priority(int new_priority) {
 
     thread_current()->priority = new_priority;
+    test_yield();
 }
 
 /* Returns the current thread's priority. */
@@ -573,9 +574,11 @@ static struct thread *
 next_thread_to_run(void) {
     if (list_empty(&ready_list))
         return idle_thread;
-    else
-        return list_entry(list_pop_front(&ready_list),
-    struct thread, elem);
+    else {
+        list_sort(&ready_list, isHigherPiriority,NULL);
+        return list_entry(list_pop_back(&ready_list),
+        struct thread, elem);
+    }
 }
 
 /* Completes a thread switch by activating the new thread's page
@@ -669,8 +672,11 @@ get_priority(struct thread *t) {
     for (int i = 0; i < MAX_LOCKS; i++) {
         if (t->locks[i] == NULL )continue;
         if( list_empty(&t->locks[i]->semaphore.waiters))continue;
-        x = list_entry(list_max(&(t->locks[i]->semaphore.waiters), (list_less_func * ) & isHigherPiriority, NULL),
-        struct thread, elem)->priority;
+        list_sort(&t->locks[i]->semaphore.waiters,isHigherPiriority,NULL);
+        struct thread* t2=list_entry(list_back(&t->locks[i]->semaphore.waiters),
+        struct thread, elem);
+        if(t==t2)continue;
+        x = get_priority(t2);
         if (x > max) {
             max = x;
         }
