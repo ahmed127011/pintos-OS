@@ -351,7 +351,17 @@ cond_broadcast (struct condition *cond, struct lock *lock)
   while (!list_empty (&cond->waiters))
     cond_signal (cond, lock);
 }
-
+/**
+ * compares 2 semaphore elements to return true if the thread waiting for semaphore
+ * a has higher priority than the thread waiting for semaphore b.
+ * this method is specially implemented for condition to unblock the max thread.
+ * it is assued that only one thread is waiting on each semaphore.
+ *
+ * @param a semaphore element a
+ * @param b semaphore element b
+ * @param  Unused
+ * @return true if priority of thread waiting for sema a > priority of thread waiting for sema b.
+ */
 bool isHigherSemaphore(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
     struct semaphore_elem *sa = list_entry(a,
         struct semaphore_elem, elem);

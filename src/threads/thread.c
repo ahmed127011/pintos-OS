@@ -257,11 +257,10 @@ void test_yield(void) {
     if (list_empty(&ready_list))
         return;
     // the first thread in readyList(the highst piriority "decending order")
-    list_sort(&ready_list,isHigherPiriority,NULL);
+    list_sort(&ready_list, isHigherPiriority, NULL);
     t = list_entry(list_back(&ready_list),
     struct thread, elem);
-    if (thread_get_priority() < get_priority(t))
-    {
+    if (thread_get_priority() < get_priority(t)) {
         thread_yield();
     }
 }
@@ -327,7 +326,7 @@ bool isHigherPiriority(const struct list_elem *a, const struct list_elem *b, voi
     struct thread *tb = list_entry(b,
     struct thread, elem);
 
-    return (get_priority(ta) <get_priority(tb));
+    return (get_priority(ta) < get_priority(tb));
 
 }
 /*mazen code end*/
@@ -575,7 +574,7 @@ next_thread_to_run(void) {
     if (list_empty(&ready_list))
         return idle_thread;
     else {
-        list_sort(&ready_list, isHigherPiriority,NULL);
+        list_sort(&ready_list, isHigherPiriority, NULL);
         return list_entry(list_pop_back(&ready_list),
         struct thread, elem);
     }
@@ -660,9 +659,15 @@ allocate_tid(void) {
     return tid;
 }
 
-
+/*maximim number of locks a thread can have*/
 const int MAX_LOCKS = 8;
 
+/**
+ * calculates priority of thread t
+ * it compares the t->priority with the max priority of all threads waiting for the locks that thread t have.
+ * @param t thread.
+ * @return priority of thread t.
+ */
 int
 get_priority(struct thread *t) {
 
@@ -670,12 +675,12 @@ get_priority(struct thread *t) {
 
     int x;
     for (int i = 0; i < MAX_LOCKS; i++) {
-        if (t->locks[i] == NULL )continue;
-        if( list_empty(&t->locks[i]->semaphore.waiters))continue;
-        list_sort(&t->locks[i]->semaphore.waiters,isHigherPiriority,NULL);
-        struct thread* t2=list_entry(list_back(&t->locks[i]->semaphore.waiters),
+        if (t->locks[i] == NULL)continue;
+        if (list_empty(&t->locks[i]->semaphore.waiters))continue;
+        list_sort(&t->locks[i]->semaphore.waiters, isHigherPiriority, NULL);
+        struct thread *t2 = list_entry(list_back(&t->locks[i]->semaphore.waiters),
         struct thread, elem);
-        if(t==t2)continue;
+        if (t == t2)continue;
         x = get_priority(t2);
         if (x > max) {
             max = x;
@@ -684,13 +689,22 @@ get_priority(struct thread *t) {
     return max;
 }
 
-
+/**
+ * calculates the current thread priority.
+ * @return current thread priority
+ */
 int
 get_current_priority() {
-    struct thread * thread_=thread_current();
+    struct thread *thread_ = thread_current();
     return get_priority(thread_);
 }
 
+/**
+ * initialize all thread locks to NULL.
+ * called when creating a new thread.
+ *
+ * @param t the new thread
+ */
 void
 init_locks(struct thread *t) {
     for (int i = 0; i < MAX_LOCKS; i++) {
@@ -698,6 +712,12 @@ init_locks(struct thread *t) {
     }
 }
 
+/**
+ * add the lock l to the current running thread.
+ * it is assumed that the thread can have maximum 8 locks.
+ *
+ * @param l the new lock to be added.
+ */
 void
 add_lock(struct lock *l) {
     for (int i = 0; i < MAX_LOCKS; i++) {
@@ -710,6 +730,12 @@ add_lock(struct lock *l) {
 
 }
 
+
+/**
+ * remove the lock l from the current running thread if exists.
+ *
+ * @param l the lock to be removed.
+ */
 void
 remove_lock(struct lock *l) {
     for (int i = 0; i < MAX_LOCKS; i++) {
