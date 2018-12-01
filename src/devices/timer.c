@@ -7,6 +7,7 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
+#include "list.h"
   
 /* See [8254] for hardware details of the 8254 timer chip. */
 
@@ -23,6 +24,9 @@ static int64_t ticks;
 /* Number of loops per timer tick.
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
+
+/*List of processes in Blocked state,that is, processes that are made to sleep*/
+static struct list blocked_list = LIST_INITIALIZER (blocked_list);
 
 static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
@@ -60,7 +64,7 @@ timer_calibrate (void)
   /* Refine the next 8 bits of loops_per_tick. */
   high_bit = loops_per_tick;
   for (test_bit = high_bit >> 1; test_bit != high_bit >> 10; test_bit >>= 1)
-    if (!too_many_loops (high_bit | test_bit))
+    if (!too_many_loops (loops_per_tick | test_bit))
       loops_per_tick |= test_bit;
 
   printf ("%'"PRIu64" loops/s.\n", (uint64_t) loops_per_tick * TIMER_FREQ);
@@ -84,6 +88,20 @@ timer_elapsed (int64_t then)
   return timer_ticks () - then;
 }
 
+/*function to compare which list element has the least finish time */
+
+bool 
+cmp_time(struct list_elem *first,struct list_elem *second)
+{
+  //get the thread structure of each list element
+  struct thread *tfirst = list_entry(first, struct thread, elem);
+  struct thread *tsecond = list_entry(second, struct thread, elem);
+  if(tfirst->finish_sleep_time < tsecond->finish_sleep_time){
+    return true;
+  }
+  return false;
+}
+
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
 void
@@ -92,9 +110,24 @@ timer_sleep (int64_t ticks)
   int64_t start = timer_ticks ();
 
   ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+  /*while (timer_elapsed (start) < ticks) 
+    thread_yield ();*/
+
+  /*Our Implementation*/
+
+  if (ticks<=0) {
+    return;
+  }
+  struct thread *curr = thread_current();
+  curr->finish_sleep_time = start + ticks;
+  /*the function returns the old level and disble the interrupts*/
+  enum intr_level old_level = intr_get_level();
+  intr_disable();
+  list_insert_ordered(&blocked_list, &curr->elem, (list_less_func *) cmp_time, NULL);
+  thread_block();
+  intr_set_level(old_level);
 }
+
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
    turned on. */
@@ -172,6 +205,21 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
+  // our implementation
+  struct list_elem *curr = list_begin(&blocked_list);
+  while(curr != list_end(&blocked_list))
+  {
+    struct thread *t = list_entry(curr,struct thread,elem);
+    if(timer_ticks() < t->finish_sleep_time){
+      break;
+    }
+    enum intr_level old_level = intr_get_level();
+    intr_disable();
+    list_pop_front(&blocked_list);
+    thread_unblock(t);
+    intr_set_level(old_level);
+    curr = list_begin(&blocked_list);
+  }
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer

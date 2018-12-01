@@ -11,10 +11,37 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "devices/timer.h"
 
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
+
+#define float_constant 1<<14
+/* FLOATING ARITHMETIC FUNCTIONS*/
+
+static int float_convert(int x){
+	return x*(float_constant);
+}
+
+
+static int float_int_nearest(int x){
+	if(x >= 0)
+		return (x+(float_constant)/2)/(float_constant);
+	return (x-(float_constant)/2)/(float_constant);
+}
+
+static int float_multiply(int x, int y){
+	return ((int64_t) x) * y / (float_constant);
+}
+
+static int float_divide(int x, int y){
+	return ((int64_t) x) * (float_constant) / y;
+}
+
+
+/*END FLOATING ARITHMETIC */
+
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
@@ -59,6 +86,8 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
 
+static int load_avg; // the deallocator
+
 static void kernel_thread(thread_func *, void *aux);
 
 static void idle(void *aux UNUSED);
@@ -92,6 +121,10 @@ int get_priority(struct thread *);
 
 int get_current_priority(void);
 
+static void thread_set_load_avg(int n);
+static void thread_update_priority(struct thread *, void * aux);
+
+
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -113,7 +146,7 @@ thread_init(void) {
     lock_init(&tid_lock);
     list_init(&ready_list);
     list_init(&all_list);
-
+     load_avg = 0;
     /* Set up a thread structure for the running thread. */
     initial_thread = running_thread();
     init_thread(initial_thread, "main", PRI_DEFAULT);
@@ -152,6 +185,26 @@ thread_tick(void) {
 #endif
     else
         kernel_ticks++;
+/* MLFQS*/
+  if(thread_mlfqs){
+	  
+     if(strcmp(t->name,"idle")!=0)
+    {
+      t->rec_cpu = t->rec_cpu + float_convert(1);
+    }
+    	  if(timer_ticks() % 4 == 0){
+		  int constant=0;
+		  if( timer_ticks() % 100 ==0){
+			  if(strcmp(t->name, "idle") == 0) thread_set_load_avg(0);
+			  else thread_set_load_avg(1);
+			  constant =1;
+			  thread_foreach(thread_update_priority, &constant);
+		  }
+		  else
+			  thread_foreach(thread_update_priority, &constant);
+	  }
+  }
+/*END MLFQS*/
 
     /* Enforce preemption. */
     if (++thread_ticks >= TIME_SLICE)
@@ -431,6 +484,19 @@ thread_set_priority(int new_priority) {
     test_yield();
 }
 
+//update priority for mlfqs
+void thread_update_priority(struct thread *t, void * aux){
+
+	if(*(int *)aux == 1){
+			t->rec_cpu = float_multiply(float_divide((2 * load_avg),(2 * load_avg +float_convert(1))), t->rec_cpu) + float_convert(t->nice);
+		}
+	int updated_priority = PRI_MAX - float_int_nearest((t->rec_cpu/4)) - (t->nice * 2);
+	t->priority = updated_priority;
+	t->absolute_priority = updated_priority;
+
+}
+
+
 /* Returns the current thread's priority. */
 int
 thread_get_priority(void) {
@@ -440,28 +506,37 @@ thread_get_priority(void) {
 /* Sets the current thread's nice value to NICE. */
 void
 thread_set_nice(int nice UNUSED) {
-    /* Not yet implemented. */
+    
+    thread_current()->nice = nice;
+    int flag=0;
+    thread_update_priority(thread_current(), &flag);
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice(void) {
-    /* Not yet implemented. */
-    return 0;
+    
+    return (thread_current()->nice);
+}
+
+void thread_set_load_avg(int n){
+
+    load_avg = float_multiply((float_divide(float_convert(59),float_convert(60))),load_avg)
+	       +float_divide(float_convert(1), float_convert(60))*(list_size(&ready_list)+ n);
 }
 
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg(void) {
-    /* Not yet implemented. */
-    return 0;
+    
+    return float_int_nearest(load_avg*100);
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu(void) {
-    /* Not yet implemented. */
-    return 0;
+    
+    return float_int_nearest(thread_current()->rec_cpu*100) ;
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -544,6 +619,14 @@ init_thread(struct thread *t, const char *name, int priority) {
     strlcpy(t->name, name, sizeof t->name);
     t->stack = (uint8_t *) t + PGSIZE;
     t->priority = priority;
+    //mlfqs
+    t->absolute_priority = priority;
+    if(thread_mlfqs){
+	  t->rec_cpu = t==initial_thread ? 0: thread_current()->rec_cpu;
+	  t->nice = t==initial_thread ? 0: thread_current()->nice;
+	  t->priority = PRI_MAX - float_int_nearest((t->rec_cpu/4)) - (t->nice * 2);
+    }
+
     t->magic = THREAD_MAGIC;
 
     old_level = intr_disable();
