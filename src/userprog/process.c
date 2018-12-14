@@ -15,11 +15,17 @@
 #include "threads/init.h"
 #include "threads/interrupt.h"
 #include "threads/palloc.h"
+#include "threads/malloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "userprog/syscall.h"
+#include "lib/string.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+
+/*the function seperates the command line and add arguments in the stack*/
+static void pass_argument(void **esp, char* raw_file_name); 
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -36,10 +42,17 @@ process_execute (const char *file_name)
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
 
-  /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  strlcpy (fn_copy, file_name, PGSIZE);
+ /* We do not want the thread to have the raw filename. Instead we want the 
+     thread’s name to be the executable name. You will need to extract the 
+     executable name from file_name and pass that in instead. */
+char *save_ptr;
+  char* temp_file_name = malloc(strlen(file_name)+1);
+ strlcpy(temp_file_name , file_name , strlen(file_name)+1);
+  temp_file_name = strtok_r (temp_file_name, " ", &save_ptr); 
+   tid = thread_create (temp_file_name, PRI_DEFAULT, start_process, fn_copy);
+ free(temp_file_name);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
   return tid;
@@ -60,6 +73,7 @@ start_process (void *file_name_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
+ 
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
@@ -75,6 +89,9 @@ start_process (void *file_name_)
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
   NOT_REACHED ();
 }
+
+
+
 
 /* Waits for thread TID to die and returns its exit status.  If
    it was terminated by the kernel (i.e. killed due to an
@@ -195,7 +212,7 @@ struct Elf32_Phdr
 #define PF_W 2          /* Writable. */
 #define PF_R 4          /* Readable. */
 
-static bool setup_stack (void **esp);
+static bool setup_stack (void **esp, char* raw_file_name);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -206,7 +223,7 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
 bool
-load (const char *file_name, void (**eip) (void), void **esp) 
+load (const char *file_name, void (**eip) (void), void **esp)
 {
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
@@ -221,8 +238,23 @@ load (const char *file_name, void (**eip) (void), void **esp)
     goto done;
   process_activate ();
 
-  /* Open executable file. */
-  file = filesys_open (file_name);
+
+/* Pintos will try to load the executable (a file) with
+   filesys_open(file_name). This filename should not be the
+   raw filename but instead just the executable name.*/
+ char *save_ptr ;
+ char *fn_copy = malloc(strlen(file_name) + 1);
+ 
+ strlcpy (fn_copy, file_name, strlen(file_name) + 1);
+ fn_copy = strtok_r (fn_copy, " ", &save_ptr); 
+ 
+ /* Open executable file. */
+  //we want to lock afile from acuire//
+
+   file = filesys_open (fn_copy);
+
+   free(fn_copy);
+
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
@@ -302,7 +334,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
-  if (!setup_stack (esp))
+   if (!setup_stack (esp, file_name))
     goto done;
 
   /* Start address. */
@@ -424,10 +456,11 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   return true;
 }
 
+
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
 static bool
-setup_stack (void **esp) 
+setup_stack (void **esp, char* raw_file_name) 
 {
   uint8_t *kpage;
   bool success = false;
@@ -441,6 +474,10 @@ setup_stack (void **esp)
       else
         palloc_free_page (kpage);
     }
+  
+  /* Pushing arguments of raw_file_name into stack. */
+  pass_argument(esp, raw_file_name);
+
   return success;
 }
 
@@ -463,3 +500,63 @@ install_page (void *upage, void *kpage, bool writable)
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
 }
+
+
+
+static void
+pass_argument(void **esp, char* raw_file_name) {
+ 
+  char *token, *save_ptr;
+  int argc = 0, bytes_count = 0;
+  int arg_length = 0;										
+ 
+   /* Pushing arguments into stack. */
+ for (token = strtok_r (raw_file_name, " ", &save_ptr); token != NULL;
+        token = strtok_r (NULL, " ", &save_ptr)) {
+	    arg_length = strlen(token) + 1;
+	    *esp -= arg_length;
+            memcpy(*esp, token, arg_length);
+            argc ++;
+            bytes_count += arg_length;
+   }
+ 
+   char *base_pointer = (char*)*esp;
+ 
+   /* Computing and Pushing word-alignment. */
+   int word_align = 4 - (bytes_count % 4) ;
+   *esp -= word_align;
+   memset(*esp, 0, word_align);
+ 
+   /* Write the last argument, consisting of four bytes of 0's. */
+   *esp -= 4;
+   memset(*esp, 0, 4);
+ 
+   /* Pushing arguments addresses into stack. */
+   int char_p_size = sizeof(char*);
+ 
+   int counter = 0;
+   while (counter < argc) {
+      *esp -= char_p_size;
+      memcpy(*esp, &base_pointer, char_p_size);
+      base_pointer += strlen(base_pointer)+1;
+      counter++;
+   }
+ 
+   /*Write the address of argv[0]. This will be a char**. */
+    char** argv  = (char**)&*esp;
+    memcpy(*esp - sizeof(char**), argv, sizeof(char**));
+    *esp -= sizeof(char**);
+
+   /* Push argc. */
+   *esp -= sizeof(int);
+   memcpy(*esp, &argc, sizeof(int));
+ 
+   /* Push fake return address. */
+   *esp -= sizeof(void *);
+   memset(*esp, 0,sizeof(void *));
+ 
+}
+
+
+
+
