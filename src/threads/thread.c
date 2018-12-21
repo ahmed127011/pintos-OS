@@ -642,6 +642,10 @@ init_thread(struct thread *t, const char *name, int priority) {
 
     t->exit_state = -1;
 
+    list_init(&t->file_list);
+     t->fd = 2;
+     
+
     old_level = intr_disable();
     init_locks(t);
     list_push_back(&all_list, &t->allelem);

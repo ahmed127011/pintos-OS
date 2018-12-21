@@ -46,6 +46,9 @@ int process_add_file (struct file *f);
 struct file* process_get_file (int fd);
 
 
+int create_file(const char *file, unsigned initial_size);
+int remove_file(const char *file);
+
 void
 syscall_init (void) 
 {
@@ -80,15 +83,14 @@ switch(*stack_ptr)
       get_params(stack_ptr, params, 1);
       f->eax = wait_for_child (*params[0]);
       break;                                  
-  /*  case SYS_CREATE:                              
+    case SYS_CREATE:                              
       get_params(stack_ptr, params, 2);
       f->eax = create_file((const char*)*params[0], *((unsigned*)params[1]));    
       break;                
     case SYS_REMOVE:                              
       get_params(stack_ptr, params, 1);
       f->eax = remove_file((const char*)*params[0]);
-      break;
-      */                
+      break;              
     case SYS_OPEN:                                
       get_params(stack_ptr, params, 1);
       f->eax = open((const char *)*params[0]);
@@ -168,17 +170,17 @@ exit (int status)
   current_thread->exit_state = status;
   if(current_thread->parent_thread != NULL) {
 
-  	struct list_elem *e; 
-  	for (e = list_begin (& current_thread->parent_thread->child_process); 
+    struct list_elem *e; 
+    for (e = list_begin (& current_thread->parent_thread->child_process); 
                 e != list_end (& current_thread->parent_thread->child_process);      
-           	e = list_next (e))
-         	{
-              		struct child_thread* child = list_entry(e, struct child_thread, child_elem);
+            e = list_next (e))
+          {
+                  struct child_thread* child = list_entry(e, struct child_thread, child_elem);
               
-              		if(child->child_tid == current_thread->tid){
-                 		child->exit_state = status;
-                	        break;
-              	        }
+                  if(child->child_tid == current_thread->tid){
+                    child->exit_state = status;
+                          break;
+                        }
                 }
   }
   thread_exit();
@@ -209,20 +211,45 @@ wait_for_child(pid_t pid) {
    return process_wait(pid);
 }
 
+int
+create_file(const char *file, unsigned initial_size)
+{
+    if(!(valid_user_prog_ptr((void*) file)))
+  exit(-1);
+
+   file_sys_lock_acquire();
+    bool success = filesys_create(file,initial_size);
+    file_sys_lock_release();
+    return success;
+ 
+ 
+}
+int
+remove_file(const char *file)
+{
+    file_sys_lock_acquire();
+    bool success = filesys_remove (file);
+    file_sys_lock_release();
+    return success;
+ 
+ 
+}
 /* maze code start*/
 
 // try to open the file if file exist returns its discriptor fd
 int open (const char *file)
 {
-  lock_acquire(&filesys_lock);
+if(!(valid_user_prog_ptr((void*) file)))
+  exit(-1);
+  file_sys_lock_acquire();
   struct file *f = filesys_open(file);
   if (!f)
     {
-      lock_release(&filesys_lock);
+      file_sys_lock_release();
       return ERROR;
     }
   int fd = process_add_file(f);
-  lock_release(&filesys_lock);
+  file_sys_lock_release();
   return fd;
 }
 
@@ -258,21 +285,23 @@ struct file* process_get_file (int fd)
 //Returns the size, in bytes, of the file open as fd
 int filesize (int fd)
 {
-  lock_acquire(&filesys_lock);
+  file_sys_lock_acquire();
   struct file *f = process_get_file(fd);
   if (!f)
     {
-      lock_release(&filesys_lock);
+      file_sys_lock_release();
       return ERROR;
     }
   int size = file_length(f);
-  lock_release(&filesys_lock);
+  file_sys_lock_release();
   return size;
 }
 
 // read number of bytes (size) from a file or keyboard and return number of theze bytes
 int read (int fd, void *buffer, unsigned size)
 {
+if(!(valid_user_prog_ptr((void*) buffer)))
+  exit(-1);
   if (fd == STDIN_FILENO)// fd 0 then reading from keyboard
     {
       unsigned i;
@@ -283,7 +312,7 @@ int read (int fd, void *buffer, unsigned size)
   }
       return size;
     }
-  lock_acquire(&filesys_lock);
+  file_sys_lock_acquire();
   struct file *f = process_get_file(fd);
   if (!f)
     {
@@ -291,13 +320,15 @@ int read (int fd, void *buffer, unsigned size)
       return ERROR;
     }
   int bytes = file_read(f, buffer, size);
-  lock_release(&filesys_lock);
+  file_sys_lock_release();
   return bytes;
 }
 
 // writes bytes in buffer into a file or console(fd 1), returns number of bytes written
 int write (int fd, const void *buffer, unsigned size)
 {
+if(!(valid_user_prog_ptr((void*) buffer)))
+  exit(-1);
   if (fd == STDOUT_FILENO)// fd 1
     {
       // there was something about break up 
@@ -305,54 +336,54 @@ int write (int fd, const void *buffer, unsigned size)
       putbuf(buffer, size);
       return size;
     }
-  lock_acquire(&filesys_lock);
+  file_sys_lock_acquire();
   struct file *f = process_get_file(fd);
   if (!f)
     {
-      lock_release(&filesys_lock);
+      file_sys_lock_release();
       return ERROR;
     }
   int bytes = file_write(f, buffer, size);
-  lock_release(&filesys_lock);
+  file_sys_lock_release();
   return bytes;
 }
 
 //Changes the next byte to be read or written in open file fd to position
 void seek (int fd, unsigned position)
 {
-  lock_acquire(&filesys_lock);
+  file_sys_lock_acquire();
   struct file *f = process_get_file(fd);
   if (!f)
     {
-      lock_release(&filesys_lock);
+      file_sys_lock_release();
       return;
     }
   file_seek(f, position);
-  lock_release(&filesys_lock);
+  file_sys_lock_release();
 }
 
 //Returns the position of the next byte to be read or written in open file fd, expressed in
 //bytes from the beginning of the file. 
 unsigned tell (int fd)
 {
-  lock_acquire(&filesys_lock);
+  file_sys_lock_acquire();
   struct file *f = process_get_file(fd);
   if (!f)
     {
-      lock_release(&filesys_lock);
+      file_sys_lock_release();
       return ERROR;
     }
   off_t offset = file_tell(f);
-  lock_release(&filesys_lock);
+  file_sys_lock_release();
   return offset;
 }
 
 // closes specific file or all files in current thread
 void close (int fd)
 {
-  lock_acquire(&filesys_lock);
+  file_sys_lock_acquire();
   process_close_file(fd);
-  lock_release(&filesys_lock);
+  file_sys_lock_release();
 }
 
 void process_close_file (int fd)
@@ -377,3 +408,6 @@ void process_close_file (int fd)
       e = next;
     }
 }
+
+
+
