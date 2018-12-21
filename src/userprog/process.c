@@ -27,6 +27,8 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 /*the function seperates the command line and add arguments in the stack*/
 static void pass_argument(void **esp, char* raw_file_name); 
 
+static void push_args(void **esp, char* raw_file_name);
+
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -77,8 +79,15 @@ start_process (void *file_name_)
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
-  if (!success) 
-    thread_exit ();
+
+  struct thread* parent_thread = thread_current()->parent_thread;
+  if(parent_thread != NULL) {
+  	 parent_thread->is_child_loaded_successfully = success;
+  	 sema_up(&parent_thread->loaded_successfully);  
+  }
+
+  if (!success)
+     thread_exit();
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -105,7 +114,34 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  return -1;
+  struct thread* current_thread = thread_current();
+  struct list_elem *e; 
+  struct child_thread* child;
+  bool found = false;
+  int exit_state = -1;
+
+  for (e = list_begin (&current_thread->child_process); e != list_end (&current_thread->child_process);
+           e = list_next (e))
+         {  
+            child = list_entry(e, struct child_thread, child_elem);
+
+            if(child->child_tid == child_tid) {
+                found = true;
+                child->parent_wait = true;
+                break;
+              }     	
+         }
+
+  if(found) {
+     if(child->is_still_alive) {
+         sema_down (&current_thread->wait_child);
+      }
+     list_remove (&child->child_elem);
+     exit_state = child->exit_state;
+     free(child);
+   } else 
+      return -1;
+  return exit_state; 
 }
 
 /* Free the current process's resources. */
@@ -115,6 +151,28 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
+ struct thread* current_thread = thread_current();
+  int exit_state = current_thread->exit_state;
+  printf("%s: exit(%d)\n", thread_name(), exit_state);
+  if(current_thread->parent_thread != NULL) {
+        struct list_elem *e;
+        for (e = list_begin (&current_thread->parent_thread->child_process); 
+        		e != list_end (&current_thread->parent_thread->child_process);      
+           e = list_next (e))
+         {
+              struct child_thread* child = list_entry(e, struct child_thread, child_elem);
+              if(child->child_tid == current_thread->tid ){
+                 child->is_still_alive = false;
+                 exit_state = child->exit_state;
+                 if(child->parent_wait)
+                     sema_up(&current_thread->parent_thread->wait_child);
+                 break;
+               }
+      	
+         }
+    current_thread->parent_thread = NULL;	
+  }
+  
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;

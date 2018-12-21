@@ -124,6 +124,7 @@ int get_current_priority(void);
 static void thread_set_load_avg(int n);
 static void thread_update_priority(struct thread *, void * aux);
 
+static struct child_thread* init_child(tid_t tid); // initialization of the child
 
 
 /* Initializes the threading system by transforming the code
@@ -256,6 +257,9 @@ thread_create(const char *name, int priority,
     /* Initialize thread. */
     init_thread(t, name, priority);
     tid = t->tid = allocate_tid();
+
+    //initialize a child structure and push it to the list of children of the current thread
+    list_push_back (&thread_current()->child_process, &init_child(tid)->child_elem);
 
     /* mazen code start */
     /*
@@ -629,10 +633,37 @@ init_thread(struct thread *t, const char *name, int priority) {
 
     t->magic = THREAD_MAGIC;
 
+    // initialize the semaphores of load and wait
+    sema_init (&t->loaded_successfully, 0);    
+    sema_init(&t->wait_child, 0);    
+
+    t->is_child_loaded_successfully = false;
+    // initialize list of children
+    list_init(&t->child_process);
+ 
+    if (t == initial_thread)
+       t->parent_thread = NULL;
+    else 
+       t->parent_thread =  thread_current();
+
+    t->exit_state = -1;
+
     old_level = intr_disable();
     init_locks(t);
     list_push_back(&all_list, &t->allelem);
     intr_set_level(old_level);
+}
+
+/* initialize the child thread. */
+static struct child_thread*
+init_child (tid_t tid) 
+{
+ struct child_thread* child = (struct child_thread*) malloc(sizeof(struct child_thread));
+ child->parent_wait = false;
+ child->exit_state = -1;
+ child->child_tid = tid;
+ child->is_still_alive = true;
+ return child;
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -756,8 +787,8 @@ get_priority(struct thread *t) {
 
     int max = t->priority;
 
-    int x;
-    for (int i = 0; i < MAX_LOCKS; i++) {
+    int x; int i;
+    for (i = 0; i < MAX_LOCKS; i++) {
         if (t->locks[i] == NULL)continue;
         if (list_empty(&t->locks[i]->semaphore.waiters))continue;
         list_sort(&t->locks[i]->semaphore.waiters, isHigherPiriority, NULL);
@@ -790,7 +821,8 @@ get_current_priority() {
  */
 void
 init_locks(struct thread *t) {
-    for (int i = 0; i < MAX_LOCKS; i++) {
+    int i;
+    for (i = 0; i < MAX_LOCKS; i++) {
         t->locks[i] = NULL;
     }
 }
@@ -803,7 +835,8 @@ init_locks(struct thread *t) {
  */
 void
 add_lock(struct lock *l) {
-    for (int i = 0; i < MAX_LOCKS; i++) {
+    int i;
+    for (i = 0; i < MAX_LOCKS; i++) {
         if (thread_current()->locks[i] == NULL) {
             thread_current()->locks[i] = l;
             break;
@@ -821,7 +854,8 @@ add_lock(struct lock *l) {
  */
 void
 remove_lock(struct lock *l) {
-    for (int i = 0; i < MAX_LOCKS; i++) {
+    int i;
+    for (i = 0; i < MAX_LOCKS; i++) {
         if (thread_current()->locks[i] == l) {
             thread_current()->locks[i] = NULL;
             break;
